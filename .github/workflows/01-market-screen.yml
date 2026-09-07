@@ -1,0 +1,71 @@
+name: 每日全市场选股
+
+on:
+  schedule:
+    - cron: '30 8 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: '强制测试（跳过交易日检查）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-market-screen
+  cancel-in-progress: false
+
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: 安装依赖与验证筛选护栏
+        run: |
+          pip install -r requirements.txt
+          python -m unittest tests.test_daily_market_screen
+      - name: 全市场筛选、GPT 分析与 QQ 邮件
+        env:
+          LLM_CHANNELS: ${{ vars.LLM_CHANNELS }}
+          LLM_PRIMARY_PROTOCOL: ${{ vars.LLM_PRIMARY_PROTOCOL }}
+          LLM_PRIMARY_API_SURFACE: ${{ vars.LLM_PRIMARY_API_SURFACE }}
+          LLM_PRIMARY_BASE_URL: ${{ vars.LLM_PRIMARY_BASE_URL }}
+          LLM_PRIMARY_MODELS: ${{ vars.LLM_PRIMARY_MODELS }}
+          LLM_PRIMARY_API_KEY: ${{ secrets.LLM_PRIMARY_API_KEY }}
+          EMAIL_SENDER: ${{ vars.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECEIVERS: ${{ vars.EMAIL_RECEIVERS }}
+          EMAIL_SENDER_NAME: '全市场选股助手'
+          TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
+          SERPAPI_API_KEYS: ${{ secrets.SERPAPI_API_KEYS }}
+          TICKFLOW_API_KEY: ${{ secrets.TICKFLOW_API_KEY }}
+          SEARXNG_PUBLIC_INSTANCES_ENABLED: ${{ vars.SEARXNG_PUBLIC_INSTANCES_ENABLED }}
+          MARKET_REVIEW_REGION: cn
+          REPORT_TYPE: detailed
+          REPORT_LANGUAGE: zh
+          MAX_WORKERS: '1'
+          ENABLE_CHIP_DISTRIBUTION: 'false'
+          REALTIME_SOURCE_PRIORITY: 'tencent,akshare_sina,efinance,akshare_em'
+          FORCE_RUN: ${{ inputs.force_run }}
+        run: |
+          args=()
+          if [ "$FORCE_RUN" = "true" ]; then args+=(--force-run); fi
+          python scripts/daily_market_screen.py "${args[@]}"
+      - name: 保存选股依据与分析报告
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: market-screen-${{ github.run_number }}
+          path: |
+            reports/
+            logs/
+          retention-days: 30
