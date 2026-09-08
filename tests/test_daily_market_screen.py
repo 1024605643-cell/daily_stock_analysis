@@ -2,10 +2,18 @@
 from types import SimpleNamespace
 import unittest
 
-from scripts.daily_market_screen import shortlist_codes
+from scripts.daily_market_screen import extract_sse_text, shortlist_codes
 
 
 class ShortlistTest(unittest.TestCase):
+    def test_repairs_split_provider_delta(self):
+        lines = [
+            'event: response.output_text.delta',
+            'data: {"delta":"hello',
+            '',
+        ]
+        self.assertEqual(extract_sse_text(lines), "hello")
+
     def test_live_empty_partial_and_invalid(self):
         result = SimpleNamespace(snapshot_count=5000, snapshot_source="sina", picks=[])
         self.assertEqual(shortlist_codes(result), [])

@@ -10,6 +10,7 @@ import re
 import sys
 from zoneinfo import ZoneInfo
 import requests
+from json_repair import loads as repair_json_loads
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
@@ -41,7 +42,10 @@ def extract_sse_text(lines):
         raw=line[5:].strip()
         if raw=="[DONE]":
             break
-        event=json.loads(raw)
+        try:
+            event=json.loads(raw)
+        except json.JSONDecodeError:
+            event=repair_json_loads(raw)
         seen.append(f"{event.get('type')}:{','.join(event.keys())}")
         if event.get("type")=="response.output_text.delta" or event_type=="response.output_text.delta":
             chunks.append(event.get("delta",""))
