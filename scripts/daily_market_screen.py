@@ -8,9 +8,10 @@ import logging
 import os
 from pathlib import Path
 import re
-import subprocess
 import sys
 from zoneinfo import ZoneInfo
+
+import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -27,6 +28,54 @@ def shortlist_codes(result):
         if not pick.excluded_by_risk and pick.code not in codes:
             codes.append(pick.code)
     return codes[:3]
+
+
+def gpt_review(result, codes):
+    """Use the provider's Responses endpoint directly to avoid LiteLLM drift."""
+    base_url = os.environ["LLM_PRIMARY_BASE_URL"].rstrip("/")
+    model = os.environ["LLM_PRIMARY_MODELS"].split(",", 1)[0].strip()
+    key = os.environ["LLM_PRIMARY_API_KEY"]
+    candidates = []
+    for pick in result.picks:
+        if pick.code in codes:
+            candidates.append({
+                "code": pick.code, "name": pick.name,
+                "factor_score": round(pick.final_score, 1),
+                "price": pick.price, "change_pct": pick.change_pct,
+                "pe": pick.pe_ratio, "pb": pick.pb_ratio,
+                "turnover_rate": pick.turnover_rate,
+                "risk_level": pick.risk_level,
+                "risk_flags": pick.risk_flags,
+                "daily_source": pick.daily_source,
+                "factor_scores": pick.factor_scores,
+            })
+    prompt = (
+        "你是谨慎的A股研究助手。根据全市场多因子筛选结果，输出中文Markdown。"
+        "先判断这些候选是否真的值得买；可以全部给出观望或回避，禁止为凑数建议买入。"
+        "逐只说明结论、技术/估值依据、买入触发条件、失效条件和主要风险；"
+        "最后给出候选优先级。明确数据日期和局限，不虚构新闻、财报或价格。\n"
+        f"数据源={result.snapshot_source}，扫描数={result.snapshot_count}，"
+        f"过滤后={result.after_filter_count}，候选={json.dumps(candidates, ensure_ascii=False)}"
+    )
+    response = requests.post(
+        f"{base_url}/responses",
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        json={"model": model, "input": prompt, "max_output_tokens": 2400},
+        timeout=240,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    text = payload.get("output_text", "")
+    if not text:
+        text = "\n".join(
+            item.get("text", "")
+            for output in payload.get("output", [])
+            for item in output.get("content", [])
+            if item.get("type") in {"output_text", "text"}
+        )
+    if not text.strip():
+        raise RuntimeError("GPT Responses returned no text")
+    return text.strip()
 
 
 def main():
@@ -83,13 +132,11 @@ def main():
             handle.write(report + "\n")
     from src.notification import NotificationService
 
+    if codes:
+        report += "\n\n---\n\n# GPT-6 候选复核\n\n" + gpt_review(result, codes)
+        (reports / "market_screen.md").write_text(report, encoding="utf-8")
     if not NotificationService().send(report):
         raise RuntimeError("Screening report notification failed")
-    if codes:
-        command = [sys.executable, "main.py", "--stocks", ",".join(codes)]
-        if args.force_run:
-            command.append("--force-run")
-        subprocess.run(command, check=True)
 
 
 if __name__ == "__main__":
