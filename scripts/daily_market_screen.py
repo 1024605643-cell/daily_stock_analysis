@@ -55,7 +55,7 @@ def gpt_review(result,codes):
         if p.code in codes:
             candidates.append({"code":p.code,"name":p.name,"factor_score":round(p.final_score,1),"price":p.price,"change_pct":p.change_pct,"pe":p.pe_ratio,"pb":p.pb_ratio,"turnover_rate":p.turnover_rate,"risk_level":p.risk_level,"risk_flags":p.risk_flags,"daily_source":p.daily_source,"factor_scores":p.factor_scores})
     prompt=("你是谨慎的A股研究助手。根据全市场多因子筛选结果输出中文Markdown。先判断候选是否真的值得买；可以全部观望或回避，禁止为凑数建议买入。逐只说明结论、技术和估值依据、买入触发条件、失效条件和主要风险，最后给出优先级。明确数据局限，不虚构新闻、财报或价格。\n"+f"数据源={result.snapshot_source}，扫描数={result.snapshot_count}，过滤后={result.after_filter_count}，候选={json.dumps(candidates,ensure_ascii=False)}")
-    with requests.post(f"{base_url}/responses",headers={"Authorization":f"Bearer {os.environ['LLM_PRIMARY_API_KEY']}","Content-Type":"application/json"},json={"model":model,"input":prompt,"max_output_tokens":1800,"stream":True},timeout=(30,300),stream=True) as response:
+    with requests.post(f"{base_url}/chat/completions",headers={"Authorization":f"Bearer {os.environ['LLM_PRIMARY_API_KEY']}","Content-Type":"application/json"},json={"model":model,"messages":[{"role":"user","content":prompt}],"max_tokens":1800,"stream":True},timeout=(30,300),stream=True) as response:
         response.raise_for_status()
         text=extract_sse_text(response.iter_lines(decode_unicode=True))
     if not text.strip():
