@@ -30,6 +30,21 @@ def shortlist_codes(result):
     return codes[:3]
 
 
+def extract_sse_text(lines):
+    """Collect output deltas from an OpenAI Responses SSE stream."""
+    chunks = []
+    for line in lines:
+        if not line or not line.startswith("data:"):
+            continue
+        raw = line[5:].strip()
+        if raw == "[DONE]":
+            break
+        event = json.loads(raw)
+        if event.get("type") == "response.output_text.delta":
+            chunks.append(event.get("delta", ""))
+    return "".join(chunks)
+
+
 def gpt_review(result, codes):
     """Use the provider's Responses endpoint directly to avoid LiteLLM drift."""
     base_url = os.environ["LLM_PRIMARY_BASE_URL"].rstrip("/")
@@ -57,22 +72,14 @@ def gpt_review(result, codes):
         f"数据源={result.snapshot_source}，扫描数={result.snapshot_count}，"
         f"过滤后={result.after_filter_count}，候选={json.dumps(candidates, ensure_ascii=False)}"
     )
-    response = requests.post(
+    with requests.post(
         f"{base_url}/responses",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json={"model": model, "input": prompt, "max_output_tokens": 2400},
-        timeout=240,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    text = payload.get("output_text", "")
-    if not text:
-        text = "\n".join(
-            item.get("text", "")
-            for output in payload.get("output", [])
-            for item in output.get("content", [])
-            if item.get("type") in {"output_text", "text"}
-        )
+        json={"model": model, "input": prompt, "max_output_tokens": 1800, "stream": True},
+        timeout=(30, 300), stream=True,
+    ) as response:
+        response.raise_for_status()
+        text = extract_sse_text(response.iter_lines(decode_unicode=True))
     if not text.strip():
         raise RuntimeError("GPT Responses returned no text")
     return text.strip()
@@ -116,10 +123,7 @@ def main():
     ]
     for pick in result.picks:
         if pick.code in codes:
-            lines.append(
-                f"| {pick.code} | {pick.name} | {pick.final_score:.1f} | "
-                f"{pick.price:.2f} | {pick.risk_level} |"
-            )
+            lines.append(f"| {pick.code} | {pick.name} | {pick.final_score:.1f} | {pick.price:.2f} | {pick.risk_level} |")
     if not codes:
         lines.append("\n今日没有通过筛选的候选，不强行推荐。")
     if result.degradation:
@@ -131,7 +135,6 @@ def main():
         with open(summary_path, "a", encoding="utf-8") as handle:
             handle.write(report + "\n")
     from src.notification import NotificationService
-
     if codes:
         report += "\n\n---\n\n# GPT-6 候选复核\n\n" + gpt_review(result, codes)
         (reports / "market_screen.md").write_text(report, encoding="utf-8")
