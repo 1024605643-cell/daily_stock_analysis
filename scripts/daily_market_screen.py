@@ -10,7 +10,6 @@ import re
 import sys
 from zoneinfo import ZoneInfo
 import requests
-from json_repair import loads as repair_json_loads
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
@@ -42,10 +41,7 @@ def extract_sse_text(lines):
         raw=line[5:].strip()
         if raw=="[DONE]":
             break
-        try:
-            event=json.loads(raw)
-        except json.JSONDecodeError:
-            event=repair_json_loads(raw)
+        event=json.loads(raw)
         seen.append(f"{event.get('type')}:{','.join(event.keys())}")
         if event.get("type")=="response.output_text.delta" or event_type=="response.output_text.delta":
             chunks.append(event.get("delta",""))
@@ -70,7 +66,7 @@ def gpt_review(result,codes):
     prompt=("你是谨慎的A股研究助手。根据全市场多因子筛选结果输出中文Markdown。先判断候选是否真的值得买；可以全部观望或回避，禁止为凑数建议买入。逐只说明结论、技术和估值依据、买入触发条件、失效条件和主要风险，最后给出优先级。明确数据局限，不虚构新闻、财报或价格。\n"+f"数据源={result.snapshot_source}，扫描数={result.snapshot_count}，过滤后={result.after_filter_count}，候选={json.dumps(candidates,ensure_ascii=False)}")
     with requests.post(f"{base_url}/responses",headers={"Authorization":f"Bearer {os.environ['LLM_PRIMARY_API_KEY']}","Content-Type":"application/json"},json={"model":model,"input":prompt,"max_output_tokens":1800,"stream":True},timeout=(30,300),stream=True) as response:
         response.raise_for_status()
-        text=extract_sse_text(response.iter_lines(decode_unicode=True))
+        text=extract_sse_text(response.iter_lines(decode_unicode=False, delimiter=b"\n"))
     if not text.strip():
         raise RuntimeError("GPT Responses returned no text")
     return text.strip()

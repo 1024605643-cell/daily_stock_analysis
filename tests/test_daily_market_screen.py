@@ -6,13 +6,14 @@ from scripts.daily_market_screen import extract_sse_text, shortlist_codes
 
 
 class ShortlistTest(unittest.TestCase):
-    def test_repairs_split_provider_delta(self):
-        lines = [
-            'event: response.output_text.delta',
-            'data: {"delta":"hello',
-            '',
-        ]
-        self.assertEqual(extract_sse_text(lines), "hello")
+    def test_utf8_stream_preserves_unicode_line_separators(self):
+        import json
+        from requests import Response
+        value = "\u4e2d\u6587\u2028\u4e70\u5165"
+        payload = ('data: ' + json.dumps({"type": "response.output_text.delta", "delta": value}, ensure_ascii=False) + '\n\n').encode('utf-8')
+        response = Response()
+        response.iter_content = lambda **kwargs: iter([payload[:19], payload[19:]])
+        self.assertEqual(extract_sse_text(response.iter_lines(decode_unicode=False, delimiter=b"\n")), value)
 
     def test_live_empty_partial_and_invalid(self):
         result = SimpleNamespace(snapshot_count=5000, snapshot_source="sina", picks=[])
